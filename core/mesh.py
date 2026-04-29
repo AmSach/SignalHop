@@ -4,7 +4,7 @@ SignalHop — Mesh Networking Layer
 Peer discovery via chirp beacons, hop-by-hop routing with TTL.
 """
 
-import struct, time, threading
+import struct, time, threading, numpy as np
 from dataclasses import dataclass
 from typing import Optional, Dict, List
 from collections import deque
@@ -54,22 +54,58 @@ class MeshNode:
         """Send a peer announcement chirp."""
         if not self.modem:
             return
-        # Beacon = short preamble only (no payload)
         preamble = self.modem.generate_preamble()
-        # Embed our node ID in the preamble via small frequency offset
-        self.modem.preamble_override = self.node_id
-        # In a real impl, we'd modulate the chirp's start frequency with node_id
-        # For now, just broadcast sync
+        # Encode node_id into last chirp via small frequency offset (±200Hz encoding)
+        node_offset = int.from_bytes(self.node_id[:4], 'big') % 401 - 200  # -200..+200 Hz
+        chirp = self.modem.generate_chirp(up=True)
+        freq_start = self.modem.cfg.carrier_low - 2000 + node_offset
+        freq_end = self.modem.cfg.carrier_high + 2000
+        t = np.linspace(0, 0.05, len(chirp), False)
+        phase = 2 * np.pi * np.cumsum(np.linspace(freq_start, freq_end, len(t))) / self.modem.cfg.sample_rate
+        chirp = np.sin(phase).astype(np.float32)
+        tx_signal = np.concatenate([preamble, chirp])
+        # In production: write to audio device or transmit via modem
+        return tx_signal
 
     def _peer_cleanup(self):
         """Remove stale peers."""
         while self.running:
-            time.sleep(PEER_TIMEOUT)
+            time.sleep(PEER_TIMEOUT / 2)
             with self._lock:
                 now = time.time()
                 stale = [k for k, v in self.peers.items() if now - v.last_seen > PEER_TIMEOUT]
                 for k in stale:
                     del self.peers[k]
+                    # Prune routing table entries via this peer
+                    self.routing_table = {d: v for d, v in self.routing_table.items() if v[0] != k}
+
+    def discover_peers(self, signals: List[tuple]) -> List[Peer]:
+        """Process incoming signals and update peer list.
+        
+        Args:
+            signals: List of (signal_array, peer_node_id, signal_strength) tuples
+                    from recent acoustic activity.
+        
+        Returns:
+            List of newly discovered or updated peers.
+        """
+        discovered = []
+        for signal, peer_id, strength in signals:
+            if not self.modem:
+                continue
+            if self.modem.detect_chirp(signal):
+                with self._lock:
+                    if peer_id not in self.peers:
+                        discovered.append(peer_id)
+                    self.peers[peer_id] = Peer(
+                        node_id=peer_id,
+                        last_seen=time.time(),
+                        signal_strength=strength,
+                        hops=1
+                    )
+                    # Update routing table
+                    self.routing_table[peer_id] = (peer_id, 1)
+        return discovered
 
     def receive_beacon(self, signal, peer_node_id, signal_strength):
         """Called when a chirp beacon is detected."""
@@ -85,27 +121,28 @@ class MeshNode:
         """Route a payload to its destination, hopping through peers."""
         if not payload:
             return None
-
-        # Check if we have a direct path to destination
-        for peer_id, peer in self.peers.items():
-            if peer.hops <= ttl:
-                return self._forward(peer_id, payload, ttl)
-
-        # No route found — flood to all peers
+        # Check routing table for direct or multi-hop path
+        dest = payload[:8] if len(payload) >= 8 else payload
+        if dest in self.routing_table:
+            next_hop, hops = self.routing_table[dest]
+            if hops <= ttl:
+                return self._forward(next_hop, payload, ttl - 1)
+        # Flood to all known peers within TTL
         return self._flood(payload, ttl)
 
-    def _forward(self, next_hop: bytes, payload: bytes, ttl: int) -> bytes:
+    def _forward(self, next_hop: bytes, payload: bytes, ttl: int) -> Optional[bytes]:
         """Forward a payload to a specific peer."""
-        if ttl <= 0:
+        if ttl < 0 or not self.modem:
             return None
-        # Build frame with decremented TTL
-        frame = self.modem.build_frame(payload, ttl=ttl - 1, sender_id=self.node_id)
-        # In real impl, transmit via modem
-        return frame
+        # Build frame manually: preamble + encoded payload
+        frame_data = bytes(self.node_id) + struct.pack('!B', ttl) + payload
+        return self.modem.build_frame(frame_data)
 
-    def _flood(self, payload: bytes, ttl: int) -> bytes:
+    def _flood(self, payload: bytes, ttl: int) -> Optional[bytes]:
         """Flood payload to all reachable peers."""
-        return self._forward(b'\xff\xff\xff\xff\xff\xff\xff\xff', payload, ttl)
+        if ttl < 0 or not self.modem:
+            return None
+        return self.modem.build_frame(b'\xff' * 8 + struct.pack('!B', ttl) + payload)
 
 
 class RoutingTable:

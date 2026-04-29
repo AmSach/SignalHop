@@ -24,10 +24,11 @@
   .btn.secondary:hover { border-color: #00d4ff; color: #00d4ff; }
   .log { background: #0a0a0f; border: 1px solid #1a1a1a; border-radius: 8px; padding: 12px; font-family: monospace; font-size: 0.8rem; max-height: 200px; overflow-y: auto; margin-top: 1rem; }
   .log-entry { padding: 4px 0; border-bottom: 1px solid #111; }
-  .log-entry tx { color: #00d4ff; }
-  .log-entry rx { color: #7b2dff; }
-  .log-entry info { color: #666; }
-  .log-entry err { color: #ff4444; }
+  .log-entry.tx { color: #00d4ff; }
+  .log-entry.rx { color: #7b2dff; }
+  .log-entry.info { color: #666; }
+  .log-entry.err { color: #ff4444; }
+  .log-entry.ok { color: #00ff88; }
   .canvas-wrap { text-align: center; margin: 1rem 0; }
   canvas { background: #0a0a0f; border-radius: 8px; border: 1px solid #222; }
   .info { font-size: 0.8rem; color: #555; margin-top: 0.5rem; }
@@ -51,6 +52,7 @@
   <div style="display:flex;gap:8px;margin-top:8px;">
     <button class="btn primary" id="startBtn" onclick="start()">🎤 Start</button>
     <button class="btn secondary" id="sendBtn" onclick="sendMessage()" disabled>📡 Send</button>
+    <button class="btn secondary" id="loopBtn" onclick="loopbackTest()" title="TX → RX locally to verify round-trip">🔁 Loopback Test</button>
   </div>
 </div>
 
@@ -60,23 +62,32 @@
     <span class="badge" id="freqLow">18 kHz (0)</span>
     <span class="badge" id="freqHigh">20 kHz (1)</span>
     <span class="badge" id="sampleRate">48 kHz</span>
-    <span class="badge" id="bitRate">500 bit/s</span>
+    <span class="badge" id="bitRate">500 sym/s</span>
   </div>
 </div>
 
 <div class="log" id="log"></div>
-<p class="info">Uses Web Audio API with dual-channel output at 18kHz/20kHz.<br>For best results, place devices 1-3 meters apart with speakers facing each other.</p>
+<p class="info">Uses Web Audio API with FSK encode/decode at 18kHz/20kHz.<br>
+For best results, place devices 1–3 meters apart with speakers facing each other.</p>
 
 <script>
+// ── Constants (must match Python modem.py) ────────────────────────────────────
 const SAMPLE_RATE = 48000;
 const FREQ_LOW = 18000;
 const FREQ_HIGH = 20000;
 const SYMBOL_RATE = 500;
-const SAMPLES_PER_SYMBOL = SAMPLE_RATE / SYMBOL_RATE; // 96
+const SAMPLES_PER_SYMBOL = SAMPLE_RATE / SYMBOL_RATE;  // 96
+const CHIRP_DURATION = 0.05;  // 50ms
+const CHIRP_SAMPLES = Math.floor(SAMPLE_RATE * CHIRP_DURATION);  // 2400
+const NETWORK_ID = 'SIGNALHOP_V1';
+const HEADER_SIZE = 41;
+const MAX_PAYLOAD = 256;
+const PREAMBLE_CHIRPS = 4;
 
-let audioCtx, analyser, oscillator, stream;
+let audioCtx, analyser, analyserNode, stream;
 let isRunning = false;
 let txCount = 0, rxCount = 0;
+let txBuffer = null;  // for loopback test
 
 const logEl = document.getElementById('log');
 const statusEl = document.getElementById('statusText');
@@ -87,191 +98,355 @@ const inputEl = document.getElementById('input');
 const canvas = document.getElementById('waveform');
 const ctx2d = canvas.getContext('2d');
 
-function log(type, msg) {
-  const div = document.createElement('div');
-  div.className = 'log-entry';
-  div.innerHTML = `<${type}>[${new Date().toLocaleTimeString()}] ${msg}</${type}>`;
-  logEl.prepend(div);
-}
-
-function setStatus(text, isLive = false) {
-  statusEl.textContent = text;
-  micDot.className = 'dot' + (isLive ? ' live' : '');
-}
-
-// Waveform visualizer
-function drawWaveform(data) {
-  ctx2d.fillStyle = '#0a0a0f';
-  ctx2d.fillRect(0, 0, canvas.width, canvas.height);
-  ctx2d.strokeStyle = '#00d4ff';
-  ctx2d.lineWidth = 1.5;
-  ctx2d.beginPath();
-  const step = Math.floor(data.length / canvas.width);
-  for (let i = 0; i < canvas.width; i++) {
-    const v = data[i * step] || 0;
-    const y = 40 + v * 30;
-    i === 0 ? ctx2d.moveTo(i, y) : ctx2d.lineTo(i, y);
-  }
-  ctx2d.stroke();
-}
-
-// FSK tone generator
-function generateTone(bit, durationSamples) {
-  const buf = audioCtx.createBuffer(1, durationSamples, SAMPLE_RATE);
-  const data = buf.getChannelData(0);
-  const freq = bit ? FREQ_HIGH : FREQ_LOW;
-  for (let i = 0; i < durationSamples; i++) {
-    // Cosine window for smooth edges
-    let amp = 1;
-    if (i < 20) amp = 0.5 * (1 - Math.cos(Math.PI * i / 20));
-    else if (i >= durationSamples - 20) amp = 0.5 * (1 + Math.cos(Math.PI * (durationSamples - i) / 20));
-    data[i] = amp * Math.sin(2 * Math.PI * freq * i / SAMPLE_RATE);
-  }
-  return buf;
-}
-
-// Encode message as acoustic signal
-function encodeMessage(text) {
-  const payload = new TextEncoder().encode(text);
-  const bits = [];
-  for (let b of payload) {
-    for (let i = 7; i >= 0; i--) bits.push((b >> i) & 1);
-  }
-  // Add CRC-32 placeholder (simple sum for demo)
-  let crc = 0;
-  for (let b of payload) crc ^= b;
-  bits.push(crc & 1, crc & 2 ? 1 : 0, crc & 4 ? 1 : 0, crc & 8 ? 1 : 0,
-    crc & 16 ? 1 : 0, crc & 32 ? 1 : 0, crc & 64 ? 1 : 0, crc & 128 ? 1 : 0);
-
-  // Generate chirp preamble
-  const chirpDur = 0.05; // 50ms
-  const chirpSamples = Math.floor(SAMPLE_RATE * chirpDur);
-
-  const buffers = [];
-
-  // 4 up-chirps as sync preamble
-  for (let c = 0; c < 4; c++) {
-    const chirp = audioCtx.createBuffer(1, chirpSamples, SAMPLE_RATE);
-    const d = chirp.getChannelData(0);
-    const startFreq = FREQ_LOW - 2000;
-    const endFreq = FREQ_HIGH + 2000;
-    for (let i = 0; i < chirpSamples; i++) {
-      const t = i / SAMPLE_RATE;
-      const f = startFreq + (endFreq - startFreq) * t / chirpDur;
-      d[i] = Math.sin(2 * Math.PI * f * t);
+// ── CRC-32 (zlib polynomial, matches Python's zlib.crc32) ───────────────────
+const CRC_TABLE = (() => {
+    const t = new Uint32Array(256);
+    for (let i = 0; i < 256; i++) {
+        let c = i;
+        for (let j = 0; j < 8; j++) c = (c & 1) ? (0xEDB88320 ^ (c >>> 1)) : (c >>> 1);
+        t[i] = c;
     }
-    buffers.push(chirp);
-  }
+    return t;
+})();
 
-  // FSK symbols
-  for (let bit of bits) {
-    buffers.push(generateTone(bit, SAMPLES_PER_SYMBOL));
-  }
+function crc32(data) {
+    let crc = 0xFFFFFFFF;
+    for (let i = 0; i < data.length; i++) crc = CRC_TABLE[(crc ^ data[i]) & 0xFF] ^ (crc >>> 8);
+    return (crc ^ 0xFFFFFFFF) >>> 0;
+}
 
-  return buffers;
+// ── FSK helpers ──────────────────────────────────────────────────────────────
+
+function goertzelEnergy(samples, n, targetFreq) {
+    const k = Math.round(0.5 + n * targetFreq / SAMPLE_RATE);
+    const w = 2 * Math.PI * k / n;
+    const coeff = 2 * Math.cos(w);
+    let s = 0, s1 = 0, s2 = 0;
+    for (let i = 0; i < n; i++) {
+        s = samples[i] + coeff * s1 - s2;
+        s2 = s1; s1 = s;
+    }
+    return s1 * s1 + s2 * s2 - coeff * s1 * s2;
+}
+
+function generateChirpBuffer(up = true) {
+    // Generates CHIRP_SAMPLES samples of a linear frequency sweep
+    // Same parameters as Python: start=16000, end=22000, duration=50ms
+    const buf = new Float32Array(CHIRP_SAMPLES);
+    const startFreq = FREQ_LOW - 2000;   // 16000 Hz
+    const endFreq   = FREQ_HIGH + 2000; // 22000 Hz
+    for (let i = 0; i < CHIRP_SAMPLES; i++) {
+        const t = i / SAMPLE_RATE;
+        const f = up
+            ? startFreq + (endFreq - startFreq) * t / CHIRP_DURATION
+            : endFreq   - (endFreq - startFreq) * t / CHIRP_DURATION;
+        buf[i] = Math.sin(2 * Math.PI * f * t);
+    }
+    return buf;
+}
+
+// Correlation-based chirp detection (matches Python detect_chirp)
+function detectChirp(signal) {
+    if (signal.length < CHIRP_SAMPLES) return false;
+    const chirpRef = generateChirpBuffer(true);
+    // Slide a window and find max normalized correlation
+    const searchLen = CHIRP_SAMPLES * 3;
+    let maxCorr = 0, refEnergy = 0;
+    for (let i = 0; i < chirpRef.length; i++) refEnergy += chirpRef[i] * chirpRef[i];
+    for (let pos = 0; pos < searchLen; pos++) {
+        let corr = 0, sigEnergy = 0;
+        for (let i = 0; i < CHIRP_SAMPLES && pos + i < signal.length; i++) {
+            corr += signal[pos + i] * chirpRef[i];
+            sigEnergy += signal[pos + i] * signal[pos + i];
+        }
+        const norm = Math.sqrt(sigEnergy * refEnergy);
+        if (norm > 1e-6 && corr / norm > maxCorr) maxCorr = corr / norm;
+    }
+    return maxCorr > 0.6;
+}
+
+// Demodulate FSK bits using Goertzel (matches Python demod_bits)
+function demodBits(signal) {
+    const bits = [];
+    for (let i = 0; i + SAMPLES_PER_SYMBOL <= signal.length; i += SAMPLES_PER_SYMBOL) {
+        const seg = signal.slice(i, i + SAMPLES_PER_SYMBOL);
+        const eLow  = goertzelEnergy(seg, SAMPLES_PER_SYMBOL, FREQ_LOW);
+        const eHigh = goertzelEnergy(seg, SAMPLES_PER_SYMBOL, FREQ_HIGH);
+        bits.push(eHigh > eLow ? 1 : 0);
+    }
+    return bits;
+}
+
+// Convert bit array to byte array (MSB first, matches Python's format)
+function bitsToBytes(bits) {
+    const bytes = [];
+    for (let i = 0; i + 8 <= bits.length; i += 8) {
+        let v = 0;
+        for (let j = 0; j < 8; j++) v = (v << 1) | bits[i + j];
+        bytes.push(v);
+    }
+    return new Uint8Array(bytes);
+}
+
+// ── Frame encode (matches Python build_frame) ────────────────────────────────
+function encodeMessage(text) {
+    const payload = new TextEncoder().encode(text);
+
+    // Build 41-byte header
+    const header = new Uint8Array(HEADER_SIZE);
+    for (let i = 0; i < 12; i++) header[i] = NETWORK_ID.charCodeAt(i);
+    header[12] = payload.length;
+    // header[13..15] = 0 (sequence/flags)
+    // header[16..31] = 0 (sender ID placeholder)
+    // header[32..40] = 0 (reserved)
+
+    // CRC32 of header + payload (big-endian, matches Python's struct.pack('!I'))
+    const crcVal = crc32(header);
+    const crcPayload = crc32(payload);
+    const crcCombined = crcVal ^ crcPayload;  // simplified matching Python's inline CRC
+    const crcBytes = new Uint8Array([
+        (crcCombined >> 24) & 0xFF,
+        (crcCombined >> 16) & 0xFF,
+        (crcCombined >> 8)  & 0xFF,
+         crcCombined        & 0xFF,
+    ]);
+
+    // Collect all bits: header + payload + CRC (MSB first, matching Python)
+    const bitBuffer = [];
+    function pushBits(bytes) {
+        for (let b of bytes) for (let i = 7; i >= 0; i--) bitBuffer.push((b >> i) & 1);
+    }
+    pushBits(header);
+    pushBits(payload);
+    pushBits(crcBytes);
+
+    // Build AudioBuffer chunks: 4 chirp preambles + FSK symbols
+    const chirpRef = generateChirpBuffer(true);
+    const chirpBuffers = [];
+    for (let c = 0; c < PREAMBLE_CHIRPS; c++) {
+        const buf = audioCtx.createBuffer(1, CHIRP_SAMPLES, SAMPLE_RATE);
+        buf.getChannelData(0).set(chirpRef);
+        chirpBuffers.push(buf);
+    }
+
+    // FSK symbol buffers with cosine taper (matches Python encode_symbol)
+    for (let bit of bitBuffer) {
+        const buf = audioCtx.createBuffer(1, SAMPLES_PER_SYMBOL, SAMPLE_RATE);
+        const d = buf.getChannelData(0);
+        const freq = bit ? FREQ_HIGH : FREQ_LOW;
+        for (let i = 0; i < SAMPLES_PER_SYMBOL; i++) {
+            let amp = 1.0;
+            if (i < 20) amp = 0.5 * (1 - Math.cos(Math.PI * i / 20));
+            else if (i >= SAMPLES_PER_SYMBOL - 20) amp = 0.5 * (1 + Math.cos(Math.PI * (SAMPLES_PER_SYMBOL - i) / 20));
+            d[i] = amp * Math.sin(2 * Math.PI * freq * i / SAMPLE_RATE);
+        }
+        chirpBuffers.push(buf);
+    }
+
+    return chirpBuffers;
+}
+
+// Concatenate buffer chunks into a single AudioBuffer
+function concatenateBuffers(chunks) {
+    const totalLen = chunks.reduce((s, b) => s + b.length, 0);
+    const out = audioCtx.createBuffer(1, totalLen, SAMPLE_RATE);
+    const data = out.getChannelData(0);
+    let off = 0;
+    for (const b of chunks) data.set(b.getChannelData(0), off), off += b.length;
+    return out;
 }
 
 // Play acoustic message
 async function playMessage(text) {
-  if (!audioCtx) return;
-  const buffers = encodeMessage(text);
-  const source = audioCtx.createBufferSource();
-  const totalLen = buffers.reduce((s, b) => s + b.length, 0);
-  const combined = audioCtx.createBuffer(1, totalLen, SAMPLE_RATE);
-  const data = combined.getChannelData(0);
-  let off = 0;
-  for (let b of buffers) {
-    data.set(b.getChannelData(0), off);
-    off += b.length;
-  }
+    if (!audioCtx) return;
+    const chunks = encodeMessage(text);
+    const combined = concatenateBuffers(chunks);
+    txBuffer = combined;  // save for loopback testing
 
-  // Analyze for visualizer
-  const analyser2 = audioCtx.createAnalyser();
-  analyser2.fftSize = 256;
-  const src = audioCtx.createBufferSource();
-  src.buffer = combined;
-  src.connect(analyser2);
+    // Visualize
+    const a2 = audioCtx.createAnalyser();
+    a2.fftSize = 256;
+    const src = audioCtx.createBufferSource();
+    src.buffer = combined;
+    src.connect(a2);
 
-  const display = () => {
-    const d = new Uint8Array(analyser2.frequencyBinCount);
-    analyser2.getByteTimeDomainData(d);
-    drawWaveform(d);
-  };
-
-  src.onended = () => {
-    setTimeout(() => drawWaveform(new Uint8Array(analyser2.frequencyBinCount).fill(128)), 500);
-  };
-
-  src.start();
-  txCount++;
-  log('tx', `Transmitted: "${text}" (${buffers.length} symbols)`);
+    const draw = () => {
+        if (!isRunning) return;
+        const d = new Uint8Array(a2.frequencyBinCount);
+        a2.getByteTimeDomainData(d);
+        drawWaveform(d);
+        if (src.playbackState !== src.FINISHED) requestAnimationFrame(draw);
+    };
+    src.onended = () => setTimeout(() => drawSilence(), 1000);
+    src.start();
+    txCount++;
+    log('tx', `TX: "${text}" (${chunks.length - PREAMBLE_CHIRPS} symbols, ${combined.length} samples)`);
 }
 
-// Start audio
-async function start() {
-  if (isRunning) return;
-  try {
-    stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-    audioCtx = new AudioContext({ sampleRate: SAMPLE_RATE });
-    analyser = audioCtx.createAnalyser();
-    analyser.fftSize = 256;
-    const source = audioCtx.createMediaStreamSource(stream);
-    source.connect(analyser);
-    isRunning = true;
-    setStatus('Listening...', true);
-    startBtn.textContent = '🟢 Live';
-    startBtn.disabled = true;
-    sendBtn.disabled = false;
-    log('info', `Audio initialized at ${SAMPLE_RATE}Hz`);
-    animateWaveform();
-  } catch (e) {
-    log('err', `Audio error: ${e.message}`);
-    setStatus('Mic access denied', false);
-  }
+function drawWaveform(data) {
+    ctx2d.fillStyle = '#0a0a0f';
+    ctx2d.fillRect(0, 0, canvas.width, canvas.height);
+    ctx2d.strokeStyle = '#00d4ff';
+    ctx2d.lineWidth = 1.5;
+    ctx2d.beginPath();
+    const step = Math.floor(data.length / canvas.width);
+    for (let i = 0; i < canvas.width; i++) {
+        const v = (data[i * step] || 128) / 128 - 1;
+        const y = 40 + v * 30;
+        i === 0 ? ctx2d.moveTo(i, y) : ctx2d.lineTo(i, y);
+    }
+    ctx2d.stroke();
 }
 
-// Simple continuous detection (demo — real impl needs Goertzel)
+function drawSilence() {
+    ctx2d.fillStyle = '#0a0a0f';
+    ctx2d.fillRect(0, 0, canvas.width, canvas.height);
+    ctx2d.strokeStyle = '#333';
+    ctx2d.lineWidth = 1.5;
+    ctx2d.beginPath();
+    ctx2d.moveTo(0, 40); ctx2d.lineTo(canvas.width, 40);
+    ctx2d.stroke();
+}
+
+function log(type, msg) {
+    const div = document.createElement('div');
+    div.className = `log-entry ${type}`;
+    const ts = new Date().toLocaleTimeString();
+    div.textContent = `[${ts}] ${msg}`;
+    logEl.prepend(div);
+}
+
+function setStatus(text, live = false) {
+    statusEl.textContent = text;
+    micDot.className = 'dot' + (live ? ' live' : '');
+}
+
+// ── Parse incoming audio (called from processCallback) ──────────────────────
+function tryReceive(signal) {
+    if (signal.length < PREAMBLE_CHIRPS * CHIRP_SAMPLES) return;
+    const start = PREAMBLE_CHIRPS * CHIRP_SAMPLES;
+    if (signal.length < start + HEADER_SIZE * 8 * SAMPLES_PER_SYMBOL) return;
+
+    if (!detectChirp(signal)) return;  // verify chirp preamble
+
+    const data = signal.slice(start);
+    const bits = demodBits(data);
+
+    if (bits.length < HEADER_SIZE * 8) return;
+
+    // Decode header bytes (MSB first)
+    const header = bitsToBytes(bits.slice(0, HEADER_SIZE * 8));
+
+    // Verify NETWORK_ID
+    const idStr = String.fromCharCode(...header.slice(0, 12));
+    if (idStr !== NETWORK_ID) return;
+
+    const payloadLen = header[12];
+    const totalBits = HEADER_SIZE * 8 + payloadLen * 8 + 32;
+    if (payloadLen === 0 || payloadLen > MAX_PAYLOAD || bits.length < totalBits) return;
+
+    // Decode payload
+    const payload = bitsToBytes(bits.slice(HEADER_SIZE * 8, HEADER_SIZE * 8 + payloadLen * 8));
+    const text = new TextDecoder().decode(payload);
+
+    rxCount++;
+    log('rx', `RX: "${text}" (${payloadLen}B from ${bits.length} bits)`);
+}
+
+// ── Audio capture with AnalyserNode + ScriptProcessor ───────────────────────
+let scriptNode, capturedBuffer = [];
+
 function animateWaveform() {
-  if (!isRunning) return;
-  const data = new Uint8Array(analyser.frequencyBinCount);
-  analyser.getByteTimeDomainData(data);
-  drawWaveform(data);
+    if (!isRunning) return;
+    const data = new Uint8Array(analyser.frequencyBinCount);
+    analyser.getByteTimeDomainData(data);
+    drawWaveform(data);
 
-  // Check for 18kHz / 20kHz energy peaks (simplified)
-  const freqData = new Uint8Array(analyser.frequencyBinCount);
-  analyser.getByteFrequencyData(freqData);
-  const binSize = SAMPLE_RATE / analyser.fftSize;
-  const lowBin = Math.round(FREQ_LOW / binSize);
-  const highBin = Math.round(FREQ_HIGH / binSize);
-  const lowEnergy = freqData.slice(Math.max(0, lowBin - 2), lowBin + 3).reduce((a, b) => a + b, 0);
-  const highEnergy = freqData.slice(Math.max(0, highBin - 2), highBin + 3).reduce((a, b) => a + b, 0);
+    const freqData = new Uint8Array(analyser.frequencyBinCount);
+    analyser.getByteFrequencyData(freqData);
+    const binSize = SAMPLE_RATE / analyser.fftSize;
+    const lowBin = Math.round(FREQ_LOW / binSize);
+    const highBin = Math.round(FREQ_HIGH / binSize);
+    const lowE  = freqData.slice(Math.max(0, lowBin - 2),  lowBin + 3).reduce((a, b) => a + b, 0);
+    const highE = freqData.slice(Math.max(0, highBin - 2), highBin + 3).reduce((a, b) => a + b, 0);
+    document.getElementById('freqLow').textContent  = `18kHz: ${Math.round(lowE)}`;
+    document.getElementById('freqHigh').textContent = `20kHz: ${Math.round(highE)}`;
 
-  document.getElementById('freqLow').textContent = `18kHz: ${Math.round(lowEnergy)}`;
-  document.getElementById('freqHigh').textContent = `20kHz: ${Math.round(highEnergy)}`;
-
-  if (lowEnergy > 3000 || highEnergy > 3000) {
-    // Potential signal detected
-  }
-
-  requestAnimationFrame(animateWaveform);
+    requestAnimationFrame(animateWaveform);
 }
 
-// Send message on Enter key
+// Start audio capture
+async function start() {
+    if (isRunning) return;
+    try {
+        stream = await navigator.mediaDevices.getUserMedia({ audio: true, echoCancellation: false, noiseSuppression: false, autoGainControl: false });
+        audioCtx = new AudioContext({ sampleRate: SAMPLE_RATE });
+        analyser = audioCtx.createAnalyser();
+        analyser.fftSize = 256;
+        const source = audioCtx.createMediaStreamSource(stream);
+        source.connect(analyser);
+
+        // ScriptProcessor for raw PCM capture (for demod)
+        scriptNode = audioCtx.createScriptProcessor(SAMPLES_PER_SYMBOL * 4, 1, 1);
+        capturedBuffer = [];
+        scriptNode.onaudioprocess = (e) => {
+            if (!isRunning) return;
+            const inputData = e.inputBuffer.getChannelData(0);
+            capturedBuffer.push(...inputData);
+            if (capturedBuffer.length > SAMPLE_RATE * 3) {
+                // Try to find a frame in the buffer
+                tryReceive(new Float32Array(capturedBuffer));
+                capturedBuffer = [];
+            }
+        };
+
+        isRunning = true;
+        setStatus('Listening...', true);
+        startBtn.textContent = '🟢 Live';
+        startBtn.disabled = true;
+        sendBtn.disabled = false;
+        log('info', `Audio ready at ${SAMPLE_RATE}Hz. Click Send or press Enter.`);
+        animateWaveform();
+    } catch (e) {
+        log('err', `Mic error: ${e.message}`);
+        setStatus('Mic access denied', false);
+    }
+}
+
+// Loopback test: TX locally → capture raw samples → demod
+async function loopbackTest() {
+    if (!isRunning || !txBuffer) {
+        log('err', 'Start audio first, then send a message to enable loopback test.');
+        return;
+    }
+    log('info', 'Starting loopback test...');
+
+    // Use OfflineAudioContext to "receive" the transmitted buffer
+    const offlineCtx = new OfflineAudioContext(1, txBuffer.length, SAMPLE_RATE);
+    const src = offlineCtx.createBufferSource();
+    src.buffer = txBuffer;
+    src.connect(offlineCtx.destination);
+    const rendered = await offlineCtx.startRendering();
+    const samples = rendered.getChannelData(0);
+
+    log('info', `Rendered ${samples.length} samples. Running demodulation...`);
+    tryReceive(samples);
+}
+
+// Send message
+function sendMessage() {
+    const text = inputEl.value.trim();
+    if (!text || !isRunning) return;
+    playMessage(text);
+    inputEl.value = '';
+}
+
 inputEl.addEventListener('keydown', (e) => {
-  if (e.key === 'Enter' && !e.shiftKey) {
-    e.preventDefault();
-    sendMessage();
-  }
+    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); }
 });
 
-function sendMessage() {
-  const text = inputEl.value.trim();
-  if (!text || !isRunning) return;
-  playMessage(text);
-  inputEl.value = '';
-}
-
-log('info', 'SignalHop acoustic demo loaded. Click Start to begin.');
+log('info', 'SignalHop acoustic demo loaded. Click Start to initialize audio.');
+drawSilence();
 </script>
 </body>
 </html>

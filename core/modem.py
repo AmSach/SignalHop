@@ -88,6 +88,9 @@ class AcousticModem:
         return bits
 
     def build_frame(self, payload: bytes) -> np.ndarray:
+        if not payload:
+            return np.array([], dtype=np.float32)
+
         header = bytearray()
         header += NETWORK_ID  # 12 bytes
         header += struct.pack('!BHH8s', len(payload), 0, 8, b'\x00' * 8)  # 13 bytes
@@ -123,7 +126,7 @@ class AcousticModem:
         if header_bytes[:12] != NETWORK_ID:
             return None
 
-        payload_len = header_bytes[12]
+        payload_len = int(header_bytes[12])
         if payload_len > MAX_PAYLOAD:
             return None
 

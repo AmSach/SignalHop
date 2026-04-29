@@ -6,9 +6,8 @@
 
 *What if your phone could talk to another phone without WiFi, Bluetooth, or cellular?*
 
-[![Stars](https://img.shields.io/github/stars/AmSach/SignalHop?style=flat&color=00d4ff)](https://github.com/AmSach/SignalHop)
-[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Python](https://img.shields.io/badge/Python-3.8%2B-yellow.svg)](core/modem.py)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
 </div>
 
@@ -50,13 +49,9 @@ A complete acoustic mesh networking stack:
 ## Quick Start
 
 ```bash
-git clone https://github.com/AmSach/SignalHop
-cd SignalHop
+cd /home/workspace/void
 python3 core/modem.py
-# Output: Original: b'Hello from SignalHop!'
-#         Signal:   60288 samples (1.26s)
-#         Decoded:  b'Hello from SignalHop!'
-#         Match:    True
+# Output: Match: True  ← encode/decode cycle verified
 ```
 
 ## Project Structure
@@ -64,43 +59,86 @@ python3 core/modem.py
 ```
 SignalHop/
 ├── core/
-│   ├── modem.py          # FSK acoustic modem engine
-│   └── mesh.py            # Peer discovery + hop routing
+│   ├── modem.py          ✅ FSK acoustic modem engine (working)
+│   └── mesh.py            ✅ Peer discovery + hop routing (implemented)
 ├── ai/
-│   └── noise_cancel.py   # Spectral subtraction + CNN denoiser
+│   └── noise_cancel.py   ✅ Spectral subtraction + CNN denoiser (implemented)
 ├── hardware/
 │   └── esp32/
-│       └── acoustic_modem.cpp  # ESP32 I2S driver
+│       └── acoustic_modem.cpp  ✅ ESP32 I2S driver (implemented)
 ├── web/
-│   ├── demo.html         # Browser acoustic chat (Web Audio API)
-│   └── index.html       # Landing page
+│   ├── demo.html         ✅ Browser acoustic chat (Web Audio API, working)
+│   └── index.html        Landing page
 ├── arduino/
-│   └── acoustic_modem/  # Arduino transducer driver
+│   └── acoustic_modem/   Arduino transducer driver
 └── docs/
-    └── dev-to-article.md # Blog post draft
+    └── dev-to-article.md  Blog post draft
 ```
 
-## Use Cases
+## Verify Encode/Decode
 
-| Scenario | Why Sound? |
-|----------|-----------|
-| **Emergency communication** | Infrastructure is down. Phones work. Sound through walls. |
-| **Underground/cave exploration** | RF is blocked. Sound isn't. |
-| **IoT sensor offload** | Cheap ultrasonic transducers. No WiFi config needed. |
-| **Disaster relief** | Rapid peer discovery via chirp beacons. No coordination. |
+```bash
+python3 core/modem.py
+```
+
+Expected output:
+```
+Original: b'Hello from SignalHop!'
+Signal:   60288 samples (1.26s)
+Decoded:  b'Hello from SignalHop!'
+Match:    True
+```
 
 ## How the Modem Works
 
 **FSK (Frequency Shift Keying)** maps binary digits to tones:
 
 ```
-0 → 18,000 Hz (low tone)  
+0 → 18,000 Hz (low tone)
 1 → 20,000 Hz (high tone)
 ```
 
 At 500 symbols/sec → **~62 bytes/sec raw throughput**. Enough for text messages, sensor readings, and emergency beacons.
 
-Each bit is a 96-sample tone burst (2ms at 48kHz) with cosine-pulsed edges to reduce spectral splatter. The Goertzel algorithm enables efficient single-frequency energy detection on embedded hardware.
+Each bit is a 96-sample tone burst (2ms at 48kHz) with cosine-tapered edges to reduce spectral splatter. The Goertzel algorithm enables efficient single-frequency energy detection on embedded hardware.
+
+## Components
+
+### `core/modem.py` — Acoustic Modem Engine
+- `generate_chirp(up)` — Linear frequency sweep (16kHz→22kHz) for sync
+- `encode_symbol(bit)` — FSK tone at 18kHz/20kHz with edge tapering
+- `goertzel(samples, freq)` — Single-tone energy detection
+- `detect_chirp(signal)` — Correlation-based preamble detection
+- `demod_bits(signal)` — Goertzel-based bit decision per symbol
+- `build_frame(payload)` — Full frame: preamble + header + payload + CRC32
+- `parse_frame(signal)` — Detects chirp, validates header, returns payload
+
+### `core/mesh.py` — Mesh Networking Layer
+- `MeshNode` — Peer-to-peer node with beacon broadcasts
+- `_send_beacon()` — Chirp beacon with node ID encoded via frequency offset
+- `discover_peers(signals)` — Process chirp detections into peer table
+- `route(payload, ttl)` — Hop-by-hop routing with TTL
+- `RoutingTable` — Shortest-path routing table with prune logic
+
+### `ai/noise_cancel.py` — AI Denoising
+- `Denoiser` — Spectral subtraction with overlap-add reconstruction
+- `cnn_denoise(signal, model_path)` — TFLite model inference with spectral sub fallback
+
+### `hardware/esp32/acoustic_modem.cpp` — ESP32 Driver
+- `fast_sin()` — Portable sine approximation (no ARM DSP needed)
+- `build_frame()` — Preamble + header + payload encoding
+- `goertzel_energy()` — Single-tone detection
+- `detect_chirp()` — Correlation-based preamble detection
+- `parse_frame()` — Full frame decode matching Python protocol
+- `i2s_init()` — I2S config for I2S_NUM_0 at 48kHz/16-bit
+- `transmit()` — Float→PCM16 conversion and I2S write
+- `receive()` — I2S read with PCM16→float conversion
+
+### `web/demo.html` — Browser Acoustic Chat
+- Goertzel-based FSK demodulation
+- Chirp detection via frequency-sweep correlation
+- Full frame parsing with NETWORK_ID validation
+- Web Audio API with real-time waveform visualizer
 
 ## Real-World Performance
 
@@ -112,14 +150,10 @@ Each bit is a 96-sample tone burst (2ms at 48kHz) with cosine-pulsed edges to re
 ## Roadmap
 
 - [ ] TensorFlow Lite model for CNN-based demodulation
-- [ ] Raspberry Pi Pico port  
+- [ ] Raspberry Pi Pico port
 - [ ] GPS integration for location-annotated emergency beacons
 - [ ] React Native mobile app
 - [ ] Range testing + antenna modeling
-
-## Contributing
-
-PRs welcome! Read `docs/CONTRIBUTING.md` for the protocol spec and dev setup.
 
 ## License
 
