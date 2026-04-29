@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SignalHop — Acoustic Mesh Networking</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #0a0a0a; color: #e0e0e0; line-height: 1.7; padding: 2rem; }
+  .hero { text-align: center; padding: 4rem 2rem; background: linear-gradient(135deg, #1a1a2e 0%, #0a0a0a 100%); border-radius: 16px; margin-bottom: 2rem; border: 1px solid #222; }
+  h1 { font-size: 3rem; background: linear-gradient(90deg, #00d4ff, #7b2dff); -webkit-background-clip: text; -webkit-text-fill-color: transparent; margin-bottom: 1rem; }
+  .tagline { font-size: 1.3rem; color: #888; margin-bottom: 2rem; }
+  .demo-btn { background: linear-gradient(90deg, #00d4ff, #7b2dff); color: #000; padding: 14px 32px; border-radius: 8px; font-weight: 700; text-decoration: none; display: inline-block; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 1.5rem; margin: 2rem 0; }
+  .card { background: #111; border: 1px solid #222; border-radius: 12px; padding: 1.5rem; }
+  .card h3 { color: #00d4ff; margin-bottom: 0.5rem; }
+  .card p { color: #888; font-size: 0.95rem; }
+  .specs { background: #111; border-radius: 12px; padding: 2rem; margin: 2rem 0; border: 1px solid #222; }
+  .specs table { width: 100%; border-collapse: collapse; }
+  .specs td { padding: 0.75rem 1rem; border-bottom: 1px solid #1a1a1a; color: #aaa; }
+  .specs td:first-child { color: #00d4ff; font-weight: 600; width: 40%; }
+  .cta { text-align: center; padding: 3rem; background: linear-gradient(135deg, #1a1a2e, #0a0a0a); border-radius: 16px; border: 1px solid #222; }
+  code { background: #1a1a2e; padding: 2px 8px; border-radius: 4px; color: #00d4ff; font-size: 0.9em; }
+  pre { background: #111; padding: 1.5rem; border-radius: 8px; overflow-x: auto; margin: 1rem 0; border: 1px solid #222; }
+  pre code { background: none; padding: 0; }
+  .badge { display: inline-block; background: #222; color: #00d4ff; padding: 4px 12px; border-radius: 20px; font-size: 0.8rem; margin: 4px; }
+  .mono { font-family: 'Courier New', monospace; }
+</style>
+</head>
+<body>
+
+<div class="hero">
+  <h1>SignalHop</h1>
+  <p class="tagline">Peer-to-Peer Communication via Sound Waves</p>
+  <p style="color:#666; max-width:600px; margin:0 auto 2rem;">
+    What if your phone could talk to another phone without WiFi, Bluetooth, or cellular?<br>
+    Sound works everywhere. Every phone has a speaker and microphone.
+  </p>
+  <a href="web/demo.html" class="demo-btn">🎧 Try Live Demo</a>
+  <div style="margin-top:1.5rem;">
+    <span class="badge">FSK Modem</span>
+    <span class="badge">Mesh Routing</span>
+    <span class="badge">18kHz Ultrasonic</span>
+    <span class="badge">500 sym/s</span>
+  </div>
+</div>
+
+<div class="grid">
+  <div class="card">
+    <h3>🔊 No Infrastructure</h3>
+    <p>Earthquakes, hurricanes, conferences — when the internet is down, sound still works. It propagates through walls. No towers needed.</p>
+  </div>
+  <div class="card">
+    <h3>📡 Mesh Networking</h3>
+    <p>Hop-by-hop routing with TTL. Your message travels peer-to-peer across the room or across a disaster zone.</p>
+  </div>
+  <div class="card">
+    <h3>🧠 AI Noise Cancellation</h3>
+    <p>Spectral subtraction + CNN-based demodulator. Works in noisy bars, moving cars, or underground shelters.</p>
+  </div>
+  <div class="card">
+    <h3>📱 Cross-Platform</h3>
+    <p>Python for server/ML. C++ for embedded (ESP32). JavaScript for browser demos. One protocol, everywhere.</p>
+  </div>
+</div>
+
+<div class="specs">
+  <h2 style="color:#00d4ff; margin-bottom:1rem;">Technical Specifications</h2>
+  <table>
+    <tr><td>Modulation</td><td class="mono">FSK (Frequency Shift Keying)</td></tr>
+    <tr><td>Bit Rate</td><td class="mono">500 bits/sec</td></tr>
+    <tr><td>Low Frequency</td><td class="mono">18,000 Hz (ultrasonic)</td></tr>
+    <tr><td>High Frequency</td><td class="mono">20,000 Hz (ultrasonic)</td></tr>
+    <tr><td>Range</td><td class="mono">~10m indoors, ~50m outdoors</td></tr>
+    <tr><td>Frame Size</td><td class="mono">≤ 256 bytes payload</td></tr>
+    <tr><td>Max Hops</td><td class="mono">8 relay hops</td></tr>
+    <tr><td>Preamble</td><td class="mono">4× up-chirps (200ms sync)</td></tr>
+    <tr><td>Sample Rate</td><td class="mono">48,000 Hz</td></tr>
+    <tr><td>Platforms</td><td class="mono">Python · C++ · JavaScript</td></tr>
+  </table>
+</div>
+
+<div style="max-width:700px; margin:2rem auto;">
+  <h2 style="color:#00d4ff; margin-bottom:1rem;">The Protocol</h2>
+  <pre><code>Frame Structure:
+[Preamble: 4 up-chirps] [Header: 41 bytes] [Payload: ≤256 bytes] [CRC32: 4 bytes]
+
+Header Format:
+  NETWORK_ID    : 12 bytes  ("SIGNALHOP_V1")
+  Payload Length: 1 byte
+  Sequence      : 2 bytes
+  TTL           : 2 bytes
+  Sender ID     : 8 bytes
+  Reserved      : 16 bytes
+
+CRC32 checksums header + payload for integrity verification.</code></pre>
+
+  <h2 style="color:#00d4ff; margin:2rem 0 1rem;">Quick Start</h2>
+  <pre><code>git clone https://github.com/AmSach/SignalHop
+cd SignalHop
+python3 core/modem.py</code></pre>
+  <p style="color:#888; text-align:center;">Open <code>web/demo.html</code> in two browser tabs to test acoustic chat.</p>
+</div>
+
+<div class="cta">
+  <h2 style="color:#fff; margin-bottom:1rem;">Built by Aman Sachan</h2>
+  <p style="color:#666; margin-bottom:2rem;">Open source · MIT License · PRs welcome</p>
+  <a href="https://github.com/AmSach/SignalHop" class="demo-btn">⭐ Star on GitHub</a>
+</div>
+
+</body>
+</html>
