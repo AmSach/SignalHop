@@ -71,6 +71,9 @@ SignalHop/
 │   └── index.html        Landing page
 ├── arduino/
 │   └── acoustic_modem/   Arduino transducer driver
+├── sim_demo.py            ✅ Mesh simulation with topology, routing, and triangulation
+├── sim_resilience.py      ✅ Failure/chaos simulator (node outages, ambient noise)
+├── tests/                 pytest test suite
 └── docs/
     └── dev-to-article.md  Blog post draft
 ```
