@@ -73,6 +73,7 @@ SignalHop/
 │   └── acoustic_modem/   Arduino transducer driver
 ├── sim_demo.py            ✅ Mesh simulation with topology, routing, and triangulation
 ├── sim_resilience.py      ✅ Failure/chaos simulator (node outages, ambient noise)
+├── sim_capacity.py        ✅ Node-count sweep — delivery rate vs mesh size
 ├── tests/                 pytest test suite
 └── docs/
     └── dev-to-article.md  Blog post draft
@@ -90,6 +91,38 @@ Original: b'Hello from SignalHop!'
 Signal:   60288 samples (1.26s)
 Decoded:  b'Hello from SignalHop!'
 Match:    True
+```
+
+## Mesh Capacity
+
+How does the mesh scale? Sweep node count and see what delivery rate you actually get:
+
+```bash
+python3 sim_capacity.py --trials 5
+```
+
+Example output (80m x 80m area, 20m tx range):
+
+```
+ nodes  trials  avg delivery   avg routes/node
+--------------------------------------------------------
+     4       5        27.5%              0.7
+     8       5        12.5%              0.8
+    12       5        33.1%              1.8
+    24       5        48.8%              4.0
+    48       5        45.5%              7.8
+```
+
+Observations:
+- Routing table grows linearly with density (~1 route per 6 nodes in the 80x80m area)
+- Delivery rate plateaus around 45-50% for medium-to-large meshes — collision/overlap is the dominant loss, not routing failure
+- Tiny meshes (4-8 nodes) suffer because the random topology often leaves isolated clusters
+
+## Running Tests
+
+```bash
+pytest tests/ -v
+# 23 tests passing
 ```
 
 ## How the Modem Works
