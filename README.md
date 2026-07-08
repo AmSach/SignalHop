@@ -74,6 +74,8 @@ SignalHop/
 ├── sim_demo.py            ✅ Mesh simulation with topology, routing, and triangulation
 ├── sim_resilience.py      ✅ Failure/chaos simulator (node outages, ambient noise)
 ├── sim_capacity.py        ✅ Node-count sweep — delivery rate vs mesh size
+├── sim_range.py           ✅ Physical layer SNR/range sweep with operational envelope
+├── sim_tdma.py            ✅ TDMA slot scheduler — collision-free medium access for the mesh
 ├── tests/                 pytest test suite
 └── docs/
     └── dev-to-article.md  Blog post draft
