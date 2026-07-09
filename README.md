@@ -76,6 +76,7 @@ SignalHop/
 ├── sim_capacity.py        ✅ Node-count sweep — delivery rate vs mesh size
 ├── sim_range.py           ✅ Physical layer SNR/range sweep with operational envelope
 ├── sim_tdma.py            ✅ TDMA slot scheduler — collision-free medium access for the mesh
+├── sim_fec.py             ✅ FEC comparison sweep
 ├── tests/                 pytest test suite
 └── docs/
     └── dev-to-article.md  Blog post draft
