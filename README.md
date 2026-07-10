@@ -24,6 +24,7 @@ A complete acoustic mesh networking stack:
 - **FSK Acoustic Modem** — Encodes data as 18kHz/20kHz ultrasonic tones at 500 bits/sec
 - **Mesh Protocol** — Chirp sync beacons, hop-by-hop routing with TTL (max 8 hops)
 - **AI Denoiser** — Spectral subtraction + CNN-based demodulator for real-world robustness
+- **Link Probe** — Round-trip time + chirp-correlation distance + SNR estimator (no time sync needed)
 - **Cross-platform** — Python (server/ML), C++ (ESP32), JavaScript (browser)
 
 ## Technical Specs
@@ -61,6 +62,8 @@ SignalHop/
 ├── core/
 │   ├── modem.py          ✅ FSK acoustic modem engine (working)
 │   └── mesh.py            ✅ Peer discovery + hop routing (implemented)
+│   ├── probe.py            ✅ Acoustic RTT + distance + SNR estimator
+│   └── viz.py              ✅ ASCII mesh topology visualizer
 ├── ai/
 │   └── noise_cancel.py   ✅ Spectral subtraction + CNN denoiser (implemented)
 ├── hardware/

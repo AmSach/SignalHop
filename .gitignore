@@ -4,3 +4,6 @@ __pycache__/
 .pytest_cache/
 build/
 dist/
+core/__pycache__/
+ai/__pycache__/
+tests/__pycache__/
