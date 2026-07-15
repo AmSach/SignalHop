@@ -50,7 +50,7 @@ A complete acoustic mesh networking stack:
 ## Quick Start
 
 ```bash
-cd /home/workspace/void
+cd /home/workspace/Projects/SignalHop
 python3 core/modem.py
 # Output: Match: True  ← encode/decode cycle verified
 ```
@@ -128,7 +128,7 @@ Observations:
 
 ```bash
 pytest tests/ -v
-# 23 tests passing
+# 186 tests passing
 ```
 
 ## How the Modem Works
