@@ -197,6 +197,10 @@ Each bit is a 96-sample tone burst (2ms at 48kHz) with cosine-tapered edges to r
 - [ ] React Native mobile app
 - [ ] Range testing + antenna modeling
 
+## Latest Update
+
+The current `master` branch includes acoustic absorption, battery lifetime, clock-drift-aware ranging, link-budget, and FEC simulations. The full test suite has **186 passing tests**.
+
 ## License
 
 MIT — use it for anything. Attribution appreciated.
