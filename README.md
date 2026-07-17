@@ -128,8 +128,10 @@ Observations:
 
 ```bash
 pytest tests/ -v
-# 186 tests passing
 ```
+
+The suite currently contains 186 tests covering modem framing, routing,
+noise handling, ranging, FEC, capacity, resilience, energy, and physical-link simulations.
 
 ## How the Modem Works
 
