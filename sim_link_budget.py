@@ -234,10 +234,12 @@ def _erfc(x: float) -> float:
 
 
 def _max_usable_range(env: Environment, temp_c: float, rel_humidity: float,
-                      threshold: float = 1e-3) -> float:
+                      threshold: float = 1e-3, iterations: int = 32) -> float:
     """Binary-search the maximum range where BER < threshold."""
+    if iterations < 1:
+        raise ValueError("iterations must be positive")
     lo, hi = 0.5, 200.0
-    for _ in range(50):
+    for _ in range(iterations):
         mid = (lo + hi) / 2.0
         lb = LinkBudget(range_m=mid, temp_c=temp_c, rel_humidity=rel_humidity, env=env)
         lb.compute()
