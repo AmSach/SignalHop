@@ -130,6 +130,12 @@ Observations:
 pytest tests/ -v
 ```
 
+For a quiet machine, the same validation is available without pytest progress output:
+
+```bash
+python3 -m pytest tests/ -q
+```
+
 The suite currently contains 186 tests covering modem framing, routing,
 noise handling, ranging, FEC, capacity, resilience, energy, and physical-link simulations.
 
